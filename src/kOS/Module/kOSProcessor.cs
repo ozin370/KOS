@@ -4,6 +4,7 @@ using kOS.Execution;
 using kOS.Communication;
 using kOS.Persistence;
 using kOS.Safe;
+using kOS.Safe.Serialization;
 using kOS.Safe.Compilation;
 using kOS.Safe.Compilation.KS;
 using kOS.Safe.Module;
@@ -15,6 +16,7 @@ using KSP.IO;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using kOS.Safe.Execution;
 using UnityEngine;
 using kOS.Safe.Encapsulation;
@@ -26,6 +28,8 @@ namespace kOS.Module
 {
     public class kOSProcessor : PartModule, IProcessor, IPartCostModifier, IPartMassModifier
     {
+        private const string PAWGroup = "kOS";
+
         public ProcessorModes ProcessorMode { get; private set; }
 
         public Harddisk HardDisk { get; private set; }
@@ -40,6 +44,14 @@ namespace kOS.Module
             {
                 KOSNameTag tag = part.Modules.OfType<KOSNameTag>().FirstOrDefault();
                 return tag == null ? string.Empty : tag.nameTag;
+            }
+            set
+            {
+                KOSNameTag tag = part.Modules.OfType<KOSNameTag>().FirstOrDefault();
+                // Really a null tag shouldn't ever happen.  It would mean kOS is installed but KOSNameTag's aren't on all the things.
+                // And that should only happen if someone has a bad ModuleManager config that's screwing with kOS.
+                if (tag != null)
+                    tag.nameTag = value;
             }
         }
 
@@ -68,28 +80,28 @@ namespace kOS.Module
 
         private const string BootDirectoryName = "boot";
 
-        [KSPField(isPersistant = true, guiActive = false, guiActiveEditor = true, guiName = "Boot File"), UI_ChooseOption(scene = UI_Scene.Editor)]
+        [KSPField(isPersistant = true, guiActive = false, guiActiveEditor = true, guiName = "Boot File", groupName = PAWGroup, groupDisplayName = PAWGroup), UI_ChooseOption(scene = UI_Scene.Editor)]
         public string bootFile = "None";
 
-        [KSPField(isPersistant = true, guiName = "kOS Disk Space", guiActive = true)]
+        [KSPField(isPersistant = true, guiName = "kOS Disk Space", guiActive = true, groupName = PAWGroup, groupDisplayName = PAWGroup)]
         public int diskSpace = 1024;
 
-        [KSPField(isPersistant = true, guiName = "kOS Base Disk Space", guiActive = false)]
+        [KSPField(isPersistant = true, guiName = "kOS Base Disk Space", guiActive = false, groupName = PAWGroup, groupDisplayName = PAWGroup)]
         public int baseDiskSpace = 0;
 
-        [KSPField(isPersistant = false, guiName = "kOS Base Module Cost", guiActive = false)]
+        [KSPField(isPersistant = false, guiName = "kOS Base Module Cost", guiActive = false, groupName = PAWGroup, groupDisplayName = PAWGroup)]
         public float baseModuleCost = 0F;  // this is the base cost added to a part for including the kOSProcessor, default to 0.
 
-        [KSPField(isPersistant = true, guiName = "kOS Base Module Mass", guiActive = false)]
+        [KSPField(isPersistant = true, guiName = "kOS Base Module Mass", guiActive = false, groupName = PAWGroup, groupDisplayName = PAWGroup)]
         public float baseModuleMass = 0F;  // this is the base mass added to a part for including the kOSProcessor, default to 0.
 
-        [KSPField(isPersistant = false, guiName = "kOS Disk Space", guiActive = false, guiActiveEditor = true), UI_ChooseOption(scene = UI_Scene.Editor)]
+        [KSPField(isPersistant = false, guiName = "kOS Disk Space", guiActive = false, guiActiveEditor = true, groupName = PAWGroup, groupDisplayName = PAWGroup), UI_ChooseOption(scene = UI_Scene.Editor)]
         public string diskSpaceUI = "1024";
 
-        [KSPField(isPersistant = true, guiName = "CPU/Disk Upgrade Cost", guiActive = false, guiActiveEditor = true)]
+        [KSPField(isPersistant = true, guiName = "CPU/Disk Upgrade Cost", guiActive = false, guiActiveEditor = true, groupName = PAWGroup, groupDisplayName = PAWGroup)]
         public float additionalCost = 0F;
 
-        [KSPField(isPersistant = false, guiName = "CPU/Disk Upgrade Mass", guiActive = false, guiActiveEditor = true, guiUnits = "Kg", guiFormat = "0.00")]
+        [KSPField(isPersistant = false, guiName = "CPU/Disk Upgrade Mass", guiActive = false, guiActiveEditor = true, guiUnits = "Kg", guiFormat = "0.00", groupName = PAWGroup, groupDisplayName = PAWGroup)]
         public float additionalMassGui = 0F;
 
         [KSPField(isPersistant = false, guiActive = false, guiActiveEditor = false)]
@@ -133,24 +145,24 @@ namespace kOS.Module
             }
         }
 
-        [KSPEvent(guiActive = true, guiName = "Open Terminal", category = "skip_delay;")]
+        [KSPEvent(guiActive = true, guiName = "Open Terminal", category = "skip_delay;", groupName = PAWGroup, groupDisplayName = PAWGroup)]
         public void Activate()
         {
             SafeHouse.Logger.Log("Open Window by event");
             OpenWindow();
         }
 
-        [KSPEvent(guiActive = true, guiName = "Close Terminal", category = "skip_delay;")]
+        [KSPEvent(guiActive = true, guiName = "Close Terminal", category = "skip_delay;", groupName = PAWGroup, groupDisplayName = PAWGroup)]
         public void Deactivate()
         {
             SafeHouse.Logger.Log("Close Window by event");
             CloseWindow();
         }
 
-        [KSPField(isPersistant = true, guiName = "kOS Average Power", guiActive = true, guiActiveEditor = true, guiUnits = "EC/s", guiFormat = "0.000")]
+        [KSPField(isPersistant = true, guiName = "kOS Average Power", guiActive = true, guiActiveEditor = true, guiUnits = "EC/s", guiFormat = "0.000", groupName = PAWGroup, groupDisplayName = PAWGroup)]
         public float RequiredPower = 0;
 
-        [KSPEvent(guiActive = true, guiName = "Toggle Power")]
+        [KSPEvent(guiActive = true, guiName = "Toggle Power", groupName = PAWGroup, groupDisplayName = PAWGroup)]
         public void TogglePower()
         {
             SafeHouse.Logger.Log("Toggle Power");
@@ -257,7 +269,10 @@ namespace kOS.Module
 
         private void UpdateCostAndMass()
         {
-            float spaceDelta = diskSpace - baseDiskSpace;
+            // Clamp this to prevent negative cost and mass.
+            // (Can happen when people edit part.cfg data or
+            // use ModuleManager.)
+            float spaceDelta = Mathf.Max(diskSpace - baseDiskSpace, 0.0f);
             additionalCost = (float)System.Math.Round(spaceDelta * diskSpaceCostFactor, 0);
             AdditionalMass = spaceDelta * diskSpaceMassFactor;
             additionalMassGui = AdditionalMass * 1000;
@@ -426,6 +441,9 @@ namespace kOS.Module
                 return;
             }
             objectsInitialized = true;
+
+            CalcConstsFromKSP();
+
             shared = new SharedObjects();
 
             shared.Vessel = vessel;
@@ -501,28 +519,105 @@ namespace kOS.Module
             InitProcessorTracking();
         }
 
+        // The official value of some physics constants change over time as standards bodies re-calculate them.
+        // This code below ensures we're using whatever value KSP itself is using.
+        // The reason this code is *here* not in ConstantValue is because ConstantValue can't call
+        // the KSP API.  It's in kOS.Safe.
+        private void CalcConstsFromKSP()
+        {
+            // GravitationalAcceleration did not exist in PhysicsGlobals prior to KSP 1.6.x.
+            // This code has to use reflection to avoid calling it on older backports:
+            Type physGlobType = typeof(PhysicsGlobals);
+            if (physGlobType != null)
+            {
+                // KSP often changes its mind whether a member is a Field or Property, so let's write this
+                // to future-proof against them changing which it is by trying both ways:
+                FieldInfo asField = (physGlobType.GetField("GravitationalAcceleration", BindingFlags.Public | BindingFlags.Static));
+                if (asField != null)
+                    ConstantValue.G0 = (double) asField.GetValue(null);
+                else
+                {
+                    PropertyInfo asProperty = (physGlobType.GetProperty("GravitationalAcceleration", BindingFlags.Public | BindingFlags.Static));
+                    if (asProperty != null)
+                        ConstantValue.G0 = (double)asProperty.GetValue(null, null);
+                }
+            }
+            // Fallback: Note if none of the above work, G0 still does have a reasonable value because we
+            // hardcode it to a literal in ConstantValue before doing any of the above work.
+
+
+            // Cannot find anything in KSP's API exposing their value of G, so this indirect means
+            // of calculating it from an arbitrary body is used:
+            CelestialBody anyBody = FlightGlobals.fetch.bodies.FirstOrDefault();
+            if (anyBody == null)
+                SafeHouse.Logger.LogError("kOSProcessor: This game installation is badly broken.  It appears to have no planets in it.");
+            else
+                ConstantValue.GravConst = anyBody.gravParameter / anyBody.Mass;
+
+            ConstantValue.AvogadroConst = PhysicsGlobals.AvogadroConstant;
+            ConstantValue.BoltzmannConst = PhysicsGlobals.BoltzmannConstant;
+            ConstantValue.IdealGasConst = PhysicsGlobals.IdealGasConstant;
+        }
+
         private void InitProcessorTracking()
         {
             // Track a list of all instances of me that exist:
             if (!allMyInstances.Contains(this))
             {
                 allMyInstances.Add(this);
-                allMyInstances.Sort(delegate(kOSProcessor a, kOSProcessor b)
-                {
-                    // sort "nulls" first:
-                    if (a.part == null || a.part.vessel == null)
-                        return -1;
-                    if (b.part == null || b.part.vessel == null)
-                        return 1;
-                    // If on different vessels, sort by vessel name next:
-                    int compare = string.Compare(a.part.vessel.vesselName, b.part.vessel.vesselName,
-                        StringComparison.CurrentCultureIgnoreCase);
-                    // If on same vessel, sort by part UID last:
-                    if (compare != 0)
-                        return compare;
-                    return (a.part.uid() < b.part.uid()) ? -1 : (a.part.uid() > b.part.uid()) ? 1 : 0;
-                });
+                SortAllInstances();
             }
+        }
+
+        public static void SortAllInstances()
+        {
+            allMyInstances.Sort(delegate (kOSProcessor a, kOSProcessor b)
+            {
+                // THIS SORT IS EXPENSIVE BECAUSE IT KEEPS RECALCULATING THE CRITERIA
+                // (DISTANCE BETWEEN VESSELS, HOPS TO ROOT PART) ON EACH PAIRWISE
+                // COMPARISON OF TWO ITEMS DURING THE SORT, RATHER THAN REMEMBERING A
+                // PART'S SCORE AND RE-USING THAT ON SUBSEQUENT PAIRWISE COMPARISONS WITH THAT PART.
+                // I DON'T THINK OPTOMIZING IT IS WORTH IT WHEN THIS SORT WON"T BE DONE SUPER FREQUENTLY,
+                // MAYBE ONCE EVERY 1 or 2 SECONDS AT MOST.
+
+                // sort "nulls" to be last:
+                if (a.part == null || a.part.vessel == null)
+                    return 1;
+                if (b.part == null || b.part.vessel == null)
+                    return -1;
+
+                // If on diffrent vessels, sort by distance of vessel from active vessel - nearest vessels first:
+                if (a.part.vessel != b.part.vessel)
+                {
+                    Vector3d activePos = FlightGlobals.ActiveVessel.GetWorldPos3D();
+                    // May as well use square magnitude - it's faster and sorts things in the same order:
+                    double aSquareDistance = (activePos - a.part.vessel.GetWorldPos3D()).sqrMagnitude;
+                    double bSquareDistance = (activePos - b.part.vessel.GetWorldPos3D()).sqrMagnitude;
+                    return (aSquareDistance < bSquareDistance) ? -1 : 1;
+                }
+
+                // If it gets to here, they're on the same vessel.
+                // So sort by number of parent links to walk to get to root part (closest to root goes first).
+                int aCountParts = 0;
+                int bCountParts = 0;
+                for (Part p = a.part; p != null; p = p.parent)
+                    ++aCountParts;
+                for (Part p = b.part; p != null; p = p.parent)
+                    ++bCountParts;
+                if (aCountParts != bCountParts)
+                    return aCountParts - bCountParts;
+
+                // If it gets to here it's a tie so far - two parts were an equal number of parts away from root,
+                // which can easily happen if the kOS CPUs were attached with symmetry in the VAB/SPH.
+
+                // We CANNOT have a tie.  We need a deterministic order because differences in the list is
+                // how we discover the CPU list has chnaged.  So make one final arbitrary thing to break the
+                // tie with:
+                uint aUID = a.part.uid();
+                uint bUID = b.part.uid();
+                return (aUID < bUID ? -1 : 1);
+
+            });
         }
 
         public void OnDestroy()
@@ -530,6 +625,7 @@ namespace kOS.Module
             SafeHouse.Logger.SuperVerbose("kOSProcessor.OnDestroy()!");
 
             allMyInstances.RemoveAll(m => m == this);
+            SortAllInstances();
 
             if (shared != null)
             {
@@ -774,6 +870,7 @@ namespace kOS.Module
         {
             Opcode.InitMachineCodeData();
             CompiledObject.InitTypeData();
+            SafeSerializationMgr.CheckIDumperStatics();
         }
 
         private void ProcessElectricity(Part partObj, float time)

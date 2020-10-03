@@ -3,19 +3,21 @@ using System.Linq;
 using System.Collections.Generic;
 using kOS.Safe.Persistence;
 using UnityEngine;
+using UnityEngine.Networking;
 using kOS.Safe.Screen;
 using kOS.Module;
 using kOS.UserIO;
 using kOS.Safe.UserIO;
 using KSP.UI.Dialogs;
 using kOS.Safe.Utilities;
+using ClickThroughFix; // Needs ClickThroughBlocker DLL to be in the Reference directory.
 
 namespace kOS.Screen
 {
     // Blockotronix 550 Computor Monitor
     public class TermWindow : KOSManagedWindow , ITermWindow
     {
-        private const string CONTROL_LOCKOUT = "kOSTerminal";
+        public const string CONTROL_LOCKOUT = "kOSTerminal";
 
         /// <summary>
         /// Set to true only when compiling a version specifically for the purpose
@@ -36,12 +38,10 @@ namespace kOS.Screen
         private const bool DebugInternational = false;
 
         private static string root;
-        private static readonly Color color = new Color(1, 1, 1, 1); // opaque window color when focused
-        private static readonly Color colorAlpha = new Color(1f, 1f, 1f, 0.8f); // slightly less opaque window color when not focused.
+        private static readonly Color color = new Color(1f, 1f, 1f, 1.1f); // opaque window color when focused
         private static readonly Color bgColor = new Color(0.0f, 0.0f, 0.0f, 1.0f); // black background of terminal
-        private static readonly Color textColor = new Color(0.4f, 1.0f, 0.2f, 1.0f); // font color on terminal
+        private static readonly Color textColor = new Color(0.5f, 1.0f, 0.5f, 1.0f); // font color on terminal
         private static readonly Color textColorOff = new Color(0.8f, 0.8f, 0.8f, 0.7f); // font color when power starved.
-        private static readonly Color textColorOffAlpha = new Color(0.8f, 0.8f, 0.8f, 0.8f); // font color when power starved and not focused.
         private Rect closeButtonRect;
         private Rect resizeButtonCoords;
         private GUIStyle tinyToggleStyle;
@@ -103,10 +103,8 @@ namespace kOS.Screen
         private Texture2D networkZigZagImage;
         private Texture2D brightnessButtonImage;
         private Texture2D fontHeightButtonImage;
-        private WWW beepURL;
-        private AudioSource beepSource;
         private int guiTerminalBeepsPending;
-        
+
         private SharedObjects shared;
         private KOSTextEditPopup popupEditor;
 
@@ -145,30 +143,27 @@ namespace kOS.Screen
             closeButtonRect = new Rect(0, 0, 0, 0); // will be resized later.
             resizeButtonCoords = new Rect(0, 0, 0, 0); // will be resized later.
 
-            // Load dummy textures
-            terminalImage = new Texture2D(0, 0, TextureFormat.DXT1, false);
-            terminalFrameImage = new Texture2D(0, 0, TextureFormat.DXT1, false);
-            terminalFrameActiveImage = new Texture2D(0, 0, TextureFormat.DXT1, false);
-            resizeButtonImage = new Texture2D(0, 0, TextureFormat.DXT1, false);
-            networkZigZagImage = new Texture2D(0, 0, TextureFormat.DXT1, false);
-            brightnessButtonImage = new Texture2D(0, 0, TextureFormat.DXT1, false);
-            fontHeightButtonImage = new Texture2D(0, 0, TextureFormat.DXT1, false);
+            terminalImage = Utilities.Utils.GetTextureWithErrorMsg("kOS/GFX/dds_monitor_minimal", false);
+            terminalFrameImage = Utilities.Utils.GetTextureWithErrorMsg("kOS/GFX/dds_monitor_minimal_frame", false);
+            terminalFrameActiveImage = Utilities.Utils.GetTextureWithErrorMsg("kOS/GFX/dds_monitor_minimal_frame_active", false);
+            resizeButtonImage = Utilities.Utils.GetTextureWithErrorMsg("kOS/GFX/dds_resize-button", false);
+            networkZigZagImage = Utilities.Utils.GetTextureWithErrorMsg("kOS/GFX/dds_network-zigzag", false);
+            brightnessButtonImage = Utilities.Utils.GetTextureWithErrorMsg("kOS/GFX/dds_brightness-button", false);
+            fontHeightButtonImage = Utilities.Utils.GetTextureWithErrorMsg("kOS/GFX/dds_font-height-button", false);
 
-            root = KSPUtil.ApplicationRootPath.Replace("\\", "/");
-            LoadTexture("GameData/kOS/GFX/monitor_minimal.png", ref terminalImage);
-            LoadTexture("GameData/kOS/GFX/monitor_minimal_frame.png", ref terminalFrameImage);
-            LoadTexture("GameData/kOS/GFX/monitor_minimal_frame_active.png", ref terminalFrameActiveImage);
-            LoadTexture("GameData/kOS/GFX/resize-button.png", ref resizeButtonImage);
-            LoadTexture("GameData/kOS/GFX/network-zigzag.png", ref networkZigZagImage);
-            LoadTexture("GameData/kOS/GFX/brightness-button.png", ref brightnessButtonImage);
-            LoadTexture("GameData/kOS/GFX/font-height-button.png", ref fontHeightButtonImage);
-
+            allTexturesFound =
+                terminalImage != null &&
+                terminalFrameImage != null &&
+                terminalFrameActiveImage != null &&
+                resizeButtonImage != null &&
+                networkZigZagImage != null &&
+                brightnessButtonImage != null &&
+                fontHeightButtonImage != null;
+;
             terminalImageStyle = Create9SliceStyle(terminalImage);
             terminalFrameStyle = Create9SliceStyle(terminalFrameImage);
             terminalFrameActiveStyle = Create9SliceStyle(terminalFrameActiveImage);
 
-            LoadAudio();
-            
             tinyToggleStyle = new GUIStyle(HighLogic.Skin.toggle)
             {
                 fontSize = 10
@@ -211,7 +206,7 @@ namespace kOS.Screen
 
         public void OnDestroy()
         {
-            Unlock();
+            LoseFocus();
             GameEvents.onHideUI.Remove(OnHideUI);
             GameEvents.onShowUI.Remove(OnShowUI);
         }
@@ -220,27 +215,7 @@ namespace kOS.Screen
         {
             return soundMaker;
         }
-        
-        private void LoadAudio()
-        {
-            beepURL = new WWW("file://"+ root + "GameData/kOS/GFX/terminal-beep.wav");
-            AudioClip beepClip = beepURL.GetAudioClip();
-            beepSource = gameObject.AddComponent<AudioSource>();
-            beepSource.clip = beepClip;
-        }
 
-        public void LoadTexture(string relativePath, ref Texture2D targetTexture)
-        {
-            var imageLoader = new WWW("file://" + root + relativePath);
-            imageLoader.LoadImageIntoTexture(targetTexture);
-
-            if (imageLoader.isDone && imageLoader.bytesDownloaded == 0)
-            {
-                SafeHouse.Logger.LogError(string.Format("[TermWindow] Loading texture from \"{0}\" failed", relativePath));
-                allTexturesFound = false;
-            }
-        }
-        
         public void OpenPopupEditor(Volume v, GlobalPath path)
         {
             popupEditor.AttachTo(this, v, path);
@@ -259,11 +234,13 @@ namespace kOS.Screen
         
         public override void GetFocus()
         {
+            base.GetFocus();
             Lock();
         }
-        
+
         public override void LoseFocus()
         {
+            base.LoseFocus();
             Unlock();
         }
 
@@ -322,9 +299,7 @@ namespace kOS.Screen
             BringToFront();
 
 
-            // Exclude the TARGETING ControlType so that we can set the target vessel with the terminal open.
-            InputLockManager.SetControlLock(ControlTypes.All & ~ControlTypes.TARGETING, CONTROL_LOCKOUT);
-
+            InputLockManager.SetControlLock(ControlTypes.All, CONTROL_LOCKOUT);
             // Prevent editor keys from being pressed while typing
             EditorLogic editor = EditorLogic.fetch;
                 //TODO: POST 0.90 REVIEW
@@ -350,8 +325,6 @@ namespace kOS.Screen
 
             GetFontIfChanged(true);
 
-            ProcessUnconsumedInput();
-
             if (isLocked) ProcessKeyEvents();
             if (FlightResultsDialog.isDisplaying) return;
             if (uiGloballyHidden)
@@ -363,12 +336,12 @@ namespace kOS.Screen
 
             GUI.skin = HighLogic.Skin;
             
-            GUI.color = isLocked ? color : colorAlpha;
+            GUI.color = color;
 
             // Should probably make "gui screen name for my CPU part" into some sort of utility method:
             ChangeTitle(CalcualteTitle());
 
-            WindowRect = GUI.Window(UniqueId, WindowRect, TerminalGui, TitleText);
+            WindowRect = ClickThruBlocker.GUIWindow(UniqueId, WindowRect, TerminalGui, TitleText);
             
             if (consumeEvent)
             {
@@ -387,6 +360,7 @@ namespace kOS.Screen
             GetNewestBuffer();
             TelnetOutputUpdate();
             ProcessTelnetInput(); // want to do this even when the terminal isn't actually displaying.
+            ProcessUnconsumedInput(); // Moved here from OnGUI because it needs to run even when the GUI terminal is closed.
             if (telnetsGotRepainted)
             {
                 // Move the beeps from the screenbuffer "queue" to my own local terminal "queue".
@@ -496,7 +470,7 @@ namespace kOS.Screen
                 // command sequences
                 if (e.keyCode == KeyCode.C && e.control) // Ctrl+C
                 {
-                    ProcessOneInputChar((char)UnicodeCommand.BREAK, null);
+                    ProcessOneInputChar((char)UnicodeCommand.BREAK, null, true, true);
                     consumeEvent = true;
                     return;
                 }
@@ -506,21 +480,21 @@ namespace kOS.Screen
                     (e.keyCode == KeyCode.D && e.control) // control-D to match the telnet experience
                    )
                 {
-                    ProcessOneInputChar((char)0x000d, null);
+                    ProcessOneInputChar((char)0x000d, null, true, true);
                     consumeEvent = true;
                     return;
                 }
                 
                 if (e.keyCode == KeyCode.A && e.control)
                 {
-                    ProcessOneInputChar((char)0x0001, null);
+                    ProcessOneInputChar((char)0x0001, null, true, true);
                     consumeEvent = true;
                     return;
                 }
                 
                 if (e.keyCode == KeyCode.E && e.control)
                 {
-                    ProcessOneInputChar((char)0x0005, null);
+                    ProcessOneInputChar((char)0x0005, null, true, true);
                     consumeEvent = true;
                     return;
                 }
@@ -531,7 +505,7 @@ namespace kOS.Screen
                     if (DebugInternational)
                         c = DebugInternationalMapping(c);
 #pragma warning restore CS0162
-                    ProcessOneInputChar(c, null);
+                    ProcessOneInputChar(c, null, true, true);
                     consumeEvent = true;
                     cursorBlinkTime = 0.0f; // Don't blink while the user is still actively typing.
                 }
@@ -540,19 +514,19 @@ namespace kOS.Screen
                     consumeEvent = true;
                     switch (e.keyCode)
                     {
-                        case KeyCode.Tab:          ProcessOneInputChar('\t', null);                                  break;
-                        case KeyCode.LeftArrow:    ProcessOneInputChar((char)UnicodeCommand.LEFTCURSORONE, null);    break;
-                        case KeyCode.RightArrow:   ProcessOneInputChar((char)UnicodeCommand.RIGHTCURSORONE, null);   break;
-                        case KeyCode.UpArrow:      ProcessOneInputChar((char)UnicodeCommand.UPCURSORONE, null);      break;
-                        case KeyCode.DownArrow:    ProcessOneInputChar((char)UnicodeCommand.DOWNCURSORONE, null);    break;
-                        case KeyCode.Home:         ProcessOneInputChar((char)UnicodeCommand.HOMECURSOR, null);       break;
-                        case KeyCode.End:          ProcessOneInputChar((char)UnicodeCommand.ENDCURSOR, null);        break;
-                        case KeyCode.PageUp:       ProcessOneInputChar((char)UnicodeCommand.PAGEUPCURSOR, null);     break;
-                        case KeyCode.PageDown:     ProcessOneInputChar((char)UnicodeCommand.PAGEDOWNCURSOR, null);   break;
-                        case KeyCode.Delete:       ProcessOneInputChar((char)UnicodeCommand.DELETERIGHT, null);      break;
-                        case KeyCode.Backspace:    ProcessOneInputChar((char)UnicodeCommand.DELETELEFT, null);       break;
+                        case KeyCode.Tab:          ProcessOneInputChar('\t', null, true, true);                                  break;
+                        case KeyCode.LeftArrow:    ProcessOneInputChar((char)UnicodeCommand.LEFTCURSORONE, null, true, true);    break;
+                        case KeyCode.RightArrow:   ProcessOneInputChar((char)UnicodeCommand.RIGHTCURSORONE, null, true, true);   break;
+                        case KeyCode.UpArrow:      ProcessOneInputChar((char)UnicodeCommand.UPCURSORONE, null, true, true);      break;
+                        case KeyCode.DownArrow:    ProcessOneInputChar((char)UnicodeCommand.DOWNCURSORONE, null, true, true);    break;
+                        case KeyCode.Home:         ProcessOneInputChar((char)UnicodeCommand.HOMECURSOR, null, true, true);       break;
+                        case KeyCode.End:          ProcessOneInputChar((char)UnicodeCommand.ENDCURSOR, null, true, true);        break;
+                        case KeyCode.PageUp:       ProcessOneInputChar((char)UnicodeCommand.PAGEUPCURSOR, null, true, true);     break;
+                        case KeyCode.PageDown:     ProcessOneInputChar((char)UnicodeCommand.PAGEDOWNCURSOR, null, true, true);   break;
+                        case KeyCode.Delete:       ProcessOneInputChar((char)UnicodeCommand.DELETERIGHT, null, true, true);      break;
+                        case KeyCode.Backspace:    ProcessOneInputChar((char)UnicodeCommand.DELETELEFT, null, true, true);       break;
                         case KeyCode.KeypadEnter:  // (deliberate fall through to next case)
-                        case KeyCode.Return:       ProcessOneInputChar((char)UnicodeCommand.STARTNEXTLINE, null);    break;
+                        case KeyCode.Return:       ProcessOneInputChar((char)UnicodeCommand.STARTNEXTLINE, null, true, true);    break;
                         
                         // More can be added to the list here to support things like F1, F2, etc.  But at the moment we don't use them yet.
                         
@@ -566,7 +540,7 @@ namespace kOS.Screen
 
         private static bool IsSpecial(char c)
         {
-            if (c < 0x0020)
+            if (c < 0x0020 || c > 0xE000)
                 return true;
             if (Enum.IsDefined(typeof(UnicodeCommand), (int)c))
                 return true;
@@ -625,7 +599,7 @@ namespace kOS.Screen
                 {
                     while (telnet.InputWaiting())
                     {
-                        ProcessOneInputChar(telnet.ReadChar(), telnet);
+                        ProcessOneInputChar(telnet.ReadChar(), telnet, true, true);
                     }
                 }
             }
@@ -646,9 +620,14 @@ namespace kOS.Screen
         /// <param name="ch">The character, which might be a UnicodeCommand char</param>
         /// <param name="whichTelnet">If this came from a telnet session, which one did it come from?
         /// Set to null in order to say it wasn't from a telnet but was from the interactive GUI</param>
-        /// <param name="doQueuing">true if the keypress should get queued if we're not ready for it
+        /// <param name="allowQueue">true if the keypress should get queued if we're not ready for it
         /// right now.  If false, then the keypress will be ignored if we're not ready for it.</param>
-        public void ProcessOneInputChar(char ch, TelnetSingletonServer whichTelnet, bool doQueuing = true)
+        /// <param name="forceQueue">true if the keypress MUST get queued even if we are ready for it.
+        /// Use this for input that can jam in quickly faster than the interpeter could respond, to ensure it
+        /// doesn't get the order mixed up.  (I.e. use it for paste buffer dumps or telnet input, but not
+        /// live GUI typed stuff.)</param>
+        /// <returns>True if the input got consuemed or enqueued.  If the input was blocked and not ignored, it returns false.</returns>
+        public bool ProcessOneInputChar(char ch, TelnetSingletonServer whichTelnet, bool allowQueue = true, bool forceQueue = true)
         {
             // Weird exceptions for multi-char data combos that would have been begun on previous calls to this method:
             switch (inputExpected)
@@ -656,37 +635,40 @@ namespace kOS.Screen
                 case ExpectNextChar.RESIZEWIDTH:
                     pendingWidth = ch;
                     inputExpected = ExpectNextChar.RESIZEHEIGHT;
-                    return;
+                    return true;
                 case ExpectNextChar.RESIZEHEIGHT:
                     int height = ch;
                     shared.Screen.SetSize(height, pendingWidth);
                     inputExpected = ExpectNextChar.NORMAL;
-                    return;
+                    return true;
                 default:
                     break;
             }
 
             if (! IsSpecial(ch))
             {
-                 Type(ch, doQueuing);
+                 return Type(ch, allowQueue, forceQueue);
             }
             else
             {
                 switch(ch)
                 {
+                    // WARNING: CHARACTERS IN THIS SECTION ARE BYPASSING THE QUEUE.  BUT THEY ARE
+                    // WEIRD ASYNC THINGS THAT PROBABLY SHOULD:
+
                     // A few conversions from UnicodeCommand into those parts of ASCII that it 
                     // maps directly into nicely, otherwise just pass it through to SpecialKey():
 
                     case (char)UnicodeCommand.DELETELEFT:
                     case (char)8:
-                        Type((char)8, doQueuing);
+                        Type((char)8, allowQueue, forceQueue);
                         break;
                     case (char)UnicodeCommand.STARTNEXTLINE:
                     case '\r':
-                        Type('\r', doQueuing);
+                        Type('\r', allowQueue, forceQueue);
                         break;
                     case '\t':
-                        Type('\t', doQueuing);
+                        Type('\t', allowQueue, forceQueue);
                         break;
                     case (char)UnicodeCommand.RESIZESCREEN:
                         inputExpected = ExpectNextChar.RESIZEWIDTH;
@@ -717,52 +699,94 @@ namespace kOS.Screen
                     // Typical case is to just let SpecialKey do the work:
                     
                     default:
-                        SpecialKey(ch, doQueuing);
-                        break;
+                        return SpecialKey(ch, allowQueue, forceQueue);
                 }
+                return true;
             }
 
             // else ignore it - unimplemented char.
         }
 
-        void Type(char ch, bool doQueuing = true)
+        /// <summary>
+        /// Type a normal unicode char (not a magic control char) to the terminal,
+        /// or if the interpreter is busy queue it for later if flags allow.
+        /// </summary>
+        /// <param name="ch">char to type</param>
+        /// <param name="doQueuing">true if you want to queue the char when the interpreter isn't at the prompt
+        /// accepting input yet (i.e. the prev command is still running.) if false it will just do nothing in
+        /// that case.</param>
+        /// <param name="forceQueue">true if you want to queue the char even when the interpreter could have accepted
+        /// it.  (never have this true if doQueueing is false.)</param>
+        /// <returns>true if the char got either used or queued.  False means calling the method had no effect.
+        /// This can only return false when doQueuing is false.</returns>
+        bool Type(char ch, bool doQueuing = true, bool forceQueue = true)
         {
+            bool accepted = false;
             if (shared != null)
             {
-                if (shared.Interpreter != null && shared.Interpreter.IsWaitingForCommand())
+                if ((!forceQueue) && shared.Interpreter != null && shared.Interpreter.IsWaitingForCommand())
                 {
                     shared.Interpreter.Type(ch);
+                    accepted = true;
                 }
                 else if (doQueuing)
                 {
                     shared.Screen.CharInputQueue.Enqueue(ch);
+                    accepted = true;
                 }
                 if (IsOpen && keyClickEnabled && doQueuing)
                     shared.SoundMaker.BeginFileSound("click");
             }
+            return accepted;
         }
 
-        void SpecialKey(char key, bool doQueuing = true)
+        /// <summary>
+        /// Type a special control char to the terminal,
+        /// or if the interpreter is busy queue it for later if flags allow.
+        /// </summary>
+        /// <param name="ch">char to type</param>
+        /// <param name="doQueuing">true if you want to queue the char when the interpreter isn't at the prompt
+        /// accepting input yet (i.e. the prev command is still running.) if false it will just do nothing in
+        /// that case. (*EXCEPTION* The BREAK char will bypass the queue and happen right away.)</param>
+        /// <param name="forceQueue">true if you want to queue the char even when the interpreter could have accepted
+        /// it.  (never have this true if doQueueing is false.)</param>
+        /// <returns>true if the char got either used or queued.  False means calling the method had no effect.
+        /// This can only return false when doQueuing is false.</returns>
+        bool SpecialKey(char key, bool doQueuing = true, bool forceQueue = true)
         {
+            bool accepted = false;
+
+            // Force async out of order processing right now for interrupt keys:
+            bool rudeQueueSkipping = (key == (char)UnicodeCommand.BREAK);
+            if (rudeQueueSkipping)
+            {
+                forceQueue = false;
+                WipeAllTypeAhead();
+            }
+
             if (shared != null)
             {
                 bool wasUsed = false;
-                
-                if (shared.Interpreter != null && 
-                    (shared.Interpreter.IsWaitingForCommand() || (key == (char)UnicodeCommand.BREAK)))
+
+                if ((!forceQueue) &&
+                    shared.Interpreter != null && 
+                    (shared.Interpreter.IsWaitingForCommand() || rudeQueueSkipping))
                 {
                     wasUsed = shared.Interpreter.SpecialKey(key);
+                    accepted = true;
                 }
                 else if (doQueuing)
                 {
                     shared.Screen.CharInputQueue.Enqueue(key);
                     wasUsed = true;
+                    accepted = true;
                 }
                 if (IsOpen && keyClickEnabled && wasUsed && doQueuing)
                     shared.SoundMaker.BeginFileSound("click");
             }
+            return accepted;
         }
-        
+
         /// <summary>
         /// When the input queue is not empty and the program or command is done such that
         /// the input cursor is now all the way back to the interpreter awaiting new input,
@@ -786,10 +810,24 @@ namespace kOS.Screen
                     // that logic, we want to avoid an infinite loop here
                     // (which could happen if we kept re-queuing the
                     // chars every time we processed one in this loop.)
-                    char key = q.Dequeue();
-                    ProcessOneInputChar(key, null, false);
+                    char key = q.Peek();
+                    bool wasAccepted = ProcessOneInputChar(key, null, false, false);
+                    if (wasAccepted)
+                        q.Dequeue();
+                    else
+                        break; // do NOT consume any more of the queue until it's accepting input again in a future pass.
                 }
             }
+        }
+
+        /// <summary>
+        /// Throws away everything in the typeahead buffer and any state vars from multi-char combo command
+        /// sequences we might be in the middle of.  Used when you want to fully flush and start input over.
+        /// </summary>
+        void WipeAllTypeAhead()
+        {
+            shared.Screen.CharInputQueue.Clear();
+            inputExpected = ExpectNextChar.NORMAL;
         }
         
         /// <summary>
@@ -817,8 +855,17 @@ namespace kOS.Screen
         {
             if (!allTexturesFound)
             {
-                GUI.Label(new Rect(15, 15, 450, 300), "Error: Some or all kOS textures were not found. Please " +
-                           "go to the following folder: \n\n<Your KSP Folder>\\GameData\\kOS\\GFX\\ \n\nand ensure that the png texture files are there.");
+                GUI.Label(new Rect(15, 15, 450, 300),
+                    "Error: Some or all kOS textures were not found.\n" +
+                    "Please go to the following folder: \n\n" +
+                    "<Your KSP Folder>\\GameData\\kOS\\GFX\\ \n\n" +
+                    "and ensure that the dds texture files are there.\n" +
+                    "Check the game log to see error messages \n" +
+                    "starting with \"kOS:\" that talk about Texture files." +
+                    "\n" +
+                    "If you see this message, it probably means that\n" +
+                    "kOS isn't installed correctly and you should try\n" +
+                    "installing it again.");
 
                 closeButtonRect = new Rect(WindowRect.width - 75, WindowRect.height - 30, 50, 25);
                 if (GUI.Button(closeButtonRect, "Close"))
@@ -835,9 +882,9 @@ namespace kOS.Screen
             }
             IScreenBuffer screen = shared.Screen;
             
-            GUI.color = isLocked ? color : colorAlpha;
-
             GUI.Label(new Rect(15, 20, WindowRect.width-30, WindowRect.height-55), "", terminalImageStyle);
+            GUI.color = color;
+
             if (telnets.Count > 0)
                 DrawTelnetStatus();
 
@@ -925,7 +972,7 @@ namespace kOS.Screen
                 // Sometimes the buffer is shorter than the terminal height if the resize JUST happened in the last Update():
                 int rowsToPaint = Math.Min(screen.RowCount, buffer.Count);
 
-                for (int row = 0; row < rowsToPaint; row++)
+                for (int row = 0; row < rowsToPaint; ++row)
                 {
                     // At first the screen is filled with null chars.  So if you do something like
                     // PRINT "AAA" AT (4,0) you can get a row of the screen like so "\0\0\0\0AAA".
@@ -938,15 +985,25 @@ namespace kOS.Screen
                     GUI.Label(new Rect(0, (row * charHeight), WindowRect.width - 10, charHeight), lineString, terminalLetterSkin.label);
                 }
 
-                bool blinkOn = cursorBlinkTime < 0.5f &&
-                               screen.CursorRowShow < screen.RowCount &&
-                               IsPowered &&
-                               ShowCursor;
+                int cursorRow = screen.CursorRowShow;
+                int cursorCol = screen.CursorColumnShow;
 
-                if (blinkOn)
+                bool drawCursorThisTime =
+                    // Only if the cursor is in the "on" phase of its blink right now:
+                    cursorBlinkTime < 0.5f &&
+                    // Only if the cursor is within terminal bounds, to avoid throwing array bounds exceptions.
+                    // (Cursor can be temporarily out of bounds if the up-arrow recalled a long cmdline, or if
+                    // the terminal just got resized.)
+                    cursorRow < screen.RowCount && cursorRow < buffer.Count &&  cursorCol < buffer[cursorRow].Length &&
+                    // Only when the CPU has power
+                    IsPowered &&
+                    // Only when expecting input
+                    ShowCursor;
+
+                if (drawCursorThisTime)
                 {
-                    char ch = buffer[screen.CursorRowShow][screen.CursorColumnShow];
-                    DrawCursorAt(ch, screen.CursorColumnShow, screen.CursorRowShow, reversingScreen,
+                    char ch = buffer[cursorRow][cursorCol];
+                    DrawCursorAt(ch, cursorCol, cursorRow, reversingScreen,
                                          charWidth, charHeight, screen.Brightness);
                 }
             }
@@ -1056,6 +1113,7 @@ namespace kOS.Screen
             shared.Screen.Brightness = SafeHouse.Config.TerminalBrightness;
             formerCharPixelWidth = shared.Screen.CharacterPixelWidth;
             formerCharPixelHeight = shared.Screen.CharacterPixelHeight;
+            shared.Screen.SetSize(SafeHouse.Config.TerminalDefaultHeight, SafeHouse.Config.TerminalDefaultWidth);
 
             NotifyOfScreenResize(shared.Screen);
             shared.Screen.AddResizeNotifier(NotifyOfScreenResize);

@@ -14,6 +14,7 @@ using kOS.Suffixed.Widget;
 using kOS.Utilities;
 using kOS.Communication;
 using kOS.Safe;
+using ClickThroughFix; // Needs ClickThroughBlocker DLL to be in the Reference directory.
 
 namespace kOS.Screen
 {
@@ -41,6 +42,7 @@ namespace kOS.Screen
 
         public void Awake()
         {
+
             // Transparent - leave the widget inside it to draw background if it wants to.
             style = new GUIStyle(HighLogic.Skin.window);
             style.normal.background = null;
@@ -56,7 +58,7 @@ namespace kOS.Screen
             commDelayStyle.stretchHeight = true;
             commDelayStyle.fontSize = 10;
             commDelayStyle.fontStyle = FontStyle.Bold;
-            commDelayedTexture = GameDatabase.Instance.GetTexture("kOS/GFX/commDelay", false);
+            commDelayedTexture = Utilities.Utils.GetTextureWithErrorMsg("kOS/GFX/dds_commDelay", false);
             var solidWhite = new Texture2D(1, 1);
             solidWhite.SetPixel(0, 0, Color.white);
             commDelayStyle.normal.background = solidWhite;
@@ -66,6 +68,10 @@ namespace kOS.Screen
 
             GameEvents.onHideUI.Add (OnHideUI);
 			GameEvents.onShowUI.Add (OnShowUI);
+
+            // Fixes #2568 - Unity IMGUI does its own individual input locking per field that needs it,
+            // so don't use KSP's more high-level control locking:
+            OptOutOfControlLocking = true;
         }
 
         public void OnDestroy()
@@ -83,15 +89,7 @@ namespace kOS.Screen
         void OnShowUI()
         {
             uiGloballyHidden = false;            
-        }
-        
-        public override void GetFocus()
-        {
-        }
-        
-        public override void LoseFocus()
-        {
-        }
+        }        
 
         public override void Open()
         {
@@ -119,7 +117,7 @@ namespace kOS.Screen
 
             GUI.skin = HighLogic.Skin;
 
-            WindowRect = GUILayout.Window(UniqueId, WindowRect, WidgetGui, TitleText, style);
+            WindowRect = ClickThruBlocker.GUILayoutWindow(UniqueId, WindowRect, WidgetGui, TitleText, style);
 
             if (currentPopup != null) {
                 var r = RectExtensions.EnsureCompletelyVisible(currentPopup.popupRect);
@@ -127,7 +125,7 @@ namespace kOS.Screen
                     currentPopup.PopDown();
                 } else {
                     GUI.BringWindowToFront(UniqueId + 1);
-                    currentPopup.popupRect = GUILayout.Window(UniqueId + 1, r, PopupGui, "", style);
+                    currentPopup.popupRect = ClickThruBlocker.GUILayoutWindow(UniqueId + 1, r, PopupGui, "", style);
                 }
             }
         }

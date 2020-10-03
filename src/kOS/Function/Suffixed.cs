@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
@@ -74,6 +74,51 @@ namespace kOS.Function
 
             var result = new Direction(new UnityEngine.Quaternion((float)pitch, (float)yaw, (float)roll, (float)angle));
             ReturnValue = result;
+        }
+    }
+
+    [Function("createOrbit")]
+    public class FunctionCreateOrbit : FunctionBase
+    {
+        public override void Execute(SharedObjects shared)
+        {
+            bool cartesian = CountRemainingArgs(shared) == 4;
+
+            double ut = cartesian ? GetDouble(PopValueAssert(shared)) : double.NaN;
+
+            CelestialBody body;
+            var bodyArg = PopValueAssert(shared);
+            if (bodyArg is BodyTarget bodyTarget)
+            {
+                body = bodyTarget.Body;
+            } else
+            {
+                var bodyName = bodyArg.ToString();
+                body = VesselUtils.GetBodyByName(bodyName);
+                if (body == null)
+                    throw new KOSInvalidArgumentException("CREATEORBIT() constructor", bodyName, "Body not found in this solar system");
+            }
+
+            if (cartesian)
+            {
+                var velocity = GetVector(PopValueAssert(shared));
+                var position = GetVector(PopValueAssert(shared));
+                AssertArgBottomAndConsume(shared);
+                var ret = new Orbit();
+                ret.UpdateFromStateVectors(position, velocity, body, ut);
+                ReturnValue = new OrbitInfo(ret, shared);
+            } else 
+            {
+                double t = GetDouble(PopValueAssert(shared));
+                double mEp = DegreesToRadians(GetDouble(PopValueAssert(shared)));
+                double argPe = GetDouble(PopValueAssert(shared));
+                double lan = GetDouble(PopValueAssert(shared));
+                double sma = GetDouble(PopValueAssert(shared));
+                double e = GetDouble(PopValueAssert(shared));
+                double inc = GetDouble(PopValueAssert(shared));
+                AssertArgBottomAndConsume(shared);
+                ReturnValue = new OrbitInfo(new Orbit(inc, e, sma, lan, argPe, mEp, t, body), shared);
+            }
         }
     }
 
@@ -157,6 +202,17 @@ namespace kOS.Function
         }
     }
 
+    [Function("bodyexists")]
+    public class FunctionBodyExists : FunctionBase
+    {
+        public override void Execute(SharedObjects shared)
+        {
+            string bodyName = PopValueAssert(shared).ToString();
+            AssertArgBottomAndConsume(shared);
+            ReturnValue = VesselUtils.GetBodyByName(bodyName) != null;
+        }
+    }
+
     [Function("bodyatmosphere")]
     public class FunctionBodyAtmosphere : FunctionBase
     {
@@ -164,8 +220,26 @@ namespace kOS.Function
         {
             string bodyName = PopValueAssert(shared).ToString();
             AssertArgBottomAndConsume(shared);
-            var result = new BodyAtmosphere(VesselUtils.GetBodyByName(bodyName));
+            var bod = VesselUtils.GetBodyByName(bodyName);
+            if (bod == null)
+                throw new KOSInvalidArgumentException(GetFuncName(), bodyName, "Body not found in this solar system");
+            var result = new BodyAtmosphere(bod, shared);
             ReturnValue = result;
+        }
+    }
+
+    [Function("bounds")]
+    public class FunctionBounds : FunctionBase
+    {
+        public override void Execute(SharedObjects shared)
+        {
+            Vector relMax = GetVector(PopValueAssert(shared));
+            Vector relMin = GetVector(PopValueAssert(shared));
+            Direction facing = GetDirection(PopValueAssert(shared));
+            Vector absOrigin = GetVector(PopValueAssert(shared));
+            AssertArgBottomAndConsume(shared);
+
+            ReturnValue = new BoundsValue(relMin, relMax, absOrigin, facing, shared);
         }
     }
 
@@ -174,6 +248,8 @@ namespace kOS.Function
     {
         public override void Execute(SharedObjects shared)
         {
+            int argCount = CountRemainingArgs(shared);
+            double roll = (argCount >= 3) ? GetDouble(PopValueAssert(shared)) : double.NaN;
             double pitchAboveHorizon = GetDouble(PopValueAssert(shared));
             double degreesFromNorth = GetDouble(PopValueAssert(shared));
             AssertArgBottomAndConsume(shared);
@@ -181,6 +257,8 @@ namespace kOS.Function
             Vessel currentVessel = shared.Vessel;
             var q = UnityEngine.Quaternion.LookRotation(VesselUtils.GetNorthVector(currentVessel), currentVessel.upAxis);
             q *= UnityEngine.Quaternion.Euler(new UnityEngine.Vector3((float)-pitchAboveHorizon, (float)degreesFromNorth, 0));
+            if (!double.IsNaN(roll))
+                q *= UnityEngine.Quaternion.Euler(0, 0, (float)roll);
 
             var result = new Direction(q);
             ReturnValue = result;
@@ -256,7 +334,7 @@ namespace kOS.Function
 
             VoiceValue val;
 
-            if (shared.AllVoiceValues.TryGetValue(voiceNum, out val))
+            if (shared.AllVoiceValues.TryGetValue(voiceNum,out val))
                 ReturnValue = val;
             else
             {
@@ -273,6 +351,34 @@ namespace kOS.Function
         public override void Execute(SharedObjects shared)
         {
             shared.SoundMaker.StopAllVoices();
+        }
+    }
+
+    [Function("time")]
+    public class Time : FunctionBase
+    {
+        // Note: "TIME" is both a bound variable AND a built-in function now.
+        // If it gets called with parentheses(), the script calls this built-in function.
+        // If it gets called without them, then the bound variable is what gets called instead.
+        // Calling it using parentheses but with empty args: TIME() gives the same result
+        // as the bound variable.  While it would be cleaner to make it JUST a built-in function,
+        // the bound variable had to be retained for backward compatibility with scripts
+        // that call TIME without parentheses.
+        public override void Execute(SharedObjects shared)
+        {
+            double ut;
+            // Accepts zero or one arg:
+            int argCount = CountRemainingArgs(shared);
+
+            // If zero args, then the default is to assume you want to
+            // make a Timespan of "now":
+            if (argCount == 0)
+                ut = Planetarium.GetUniversalTime();
+            else
+                ut = GetDouble(PopValueAssert(shared));
+            AssertArgBottomAndConsume(shared);
+
+            ReturnValue = new kOS.Suffixed.TimeSpan(ut);
         }
     }
 
@@ -361,6 +467,8 @@ namespace kOS.Function
             int argc = CountRemainingArgs(shared);
 
             // Handle the var args that might be passed in, or give defaults if fewer args:
+            bool   wiping   = (argc >= 9) ? Convert.ToBoolean(PopValueAssert(shared)) : true;
+            bool   pointy   = (argc >= 8) ? Convert.ToBoolean(PopValueAssert(shared)) : true;
             double width    = (argc >= 7) ? GetDouble(PopValueAssert(shared))         : 0.2;
             bool   show     = (argc >= 6) ? Convert.ToBoolean(PopValueAssert(shared)) : false;
             double scale    = (argc >= 5) ? GetDouble(PopValueAssert(shared))         : 1.0;
@@ -382,18 +490,33 @@ namespace kOS.Function
             Vector start   = (startUpdater == null) ? GetVector(argStart) : GetDefaultStart();
 
             AssertArgBottomAndConsume(shared);
-            DoExecuteWork(shared, start, vec, rgba, str, scale, show, width, colorUpdater, vecUpdater, startUpdater);
+            DoExecuteWork(shared, start, vec, rgba, str, scale, show, width, pointy, wiping, colorUpdater, vecUpdater, startUpdater);
         }
         
-        public void DoExecuteWork(SharedObjects shared, Vector start, Vector vec, RgbaColor rgba, string str, double scale, bool show, double width, KOSDelegate colorUpdater, KOSDelegate vecUpdater, KOSDelegate startUpdater)
+        public void DoExecuteWork(
+            SharedObjects shared,
+            Vector start,
+            Vector vec,
+            RgbaColor rgba,
+            string str,
+            double scale,
+            bool show,
+            double width,
+            bool pointy,
+            bool wiping,
+            KOSDelegate colorUpdater,
+            KOSDelegate vecUpdater,
+            KOSDelegate startUpdater)
         {
-            var vRend = new VectorRenderer( shared.UpdateHandler, shared )
+            var vRend = new VectorRenderer(shared.UpdateHandler, shared)
                 {
                     Vector = vec,
                     Start = start,
                     Color = rgba,
                     Scale = scale,
-                    Width = width
+                    Width = width,
+                    Pointy = pointy,
+                    Wiping = wiping
                 };
             vRend.SetLabel( str );
             vRend.SetShow( show );
@@ -531,7 +654,11 @@ namespace kOS.Function
             // But for now, this is the only place it's done:
 
             foreach (Waypoint point in points)
-                returnList.Add(new WaypointValue(point, shared));
+            {
+                WaypointValue wp = WaypointValue.CreateWaypointValueWithCheck(point, shared, true);
+                if (wp != null)
+                    returnList.Add(wp);
+            }
             ReturnValue = returnList;
         }
     }
@@ -579,7 +706,7 @@ namespace kOS.Function
             if (point == null)
                 throw new KOSInvalidArgumentException("waypoint", "\""+pointName+"\"", "no such waypoint");
 
-            ReturnValue = new WaypointValue(point, shared);
+        ReturnValue = WaypointValue.CreateWaypointValueWithCheck(point, shared, false);
         }
     }
 

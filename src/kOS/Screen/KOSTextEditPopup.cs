@@ -1,4 +1,4 @@
-﻿using kOS.Safe.Encapsulation;
+using kOS.Safe.Encapsulation;
 using kOS.Safe.Persistence;
 using System;
 using System.Collections.Generic;
@@ -6,6 +6,7 @@ using UnityEngine;
 using kOS.Safe.Exceptions;
 using kOS.Safe.Utilities;
 using kOS.Module;
+using ClickThroughFix; // Needs ClickThroughBlocker DLL to be in the Reference directory.
 
 namespace kOS.Screen
 {
@@ -68,11 +69,9 @@ namespace kOS.Screen
             WindowRect = new Rect(0, 0, 470, 280); // bogus starting value will be changed later when attaching to a terminal.
 
             // Load dummy textures
-            resizeImage = new Texture2D(0, 0, TextureFormat.DXT1, false);
+            resizeImage = Utilities.Utils.GetTextureWithErrorMsg("kOS/GFX/dds_resize-button", false);
 
             dialog = gameObject.AddComponent<DelegateDialog>();
-            var urlGetter = new WWW(string.Format("file://{0}GameData/kOS/GFX/resize-button.png", KSPUtil.ApplicationRootPath.Replace("\\", "/")));
-            urlGetter.LoadImageIntoTexture(resizeImage);
 
             GetFont();
         }
@@ -172,7 +171,7 @@ namespace kOS.Screen
             CalcOuterCoords(); // force windowRect to lock to bottom edge of the parents
             CalcInnerCoords();
 
-            WindowRect = GUI.Window(UniqueId, WindowRect, ProcessWindow, "");
+            WindowRect = ClickThruBlocker.GUIWindow(UniqueId, WindowRect, ProcessWindow, "");
             // Some mouse global state data used by several of the checks:
 
             if (consumeEvent)
@@ -334,20 +333,26 @@ namespace kOS.Screen
 
                     case KeyCode.E:
                         if (Event.current.control)
+                        {
                             ExitEditor();
-                        Event.current.Use();
+                            Event.current.Use();
+                        }
                         break;
 
                     case KeyCode.S:
                         if (Event.current.control)
+                        {
                             SaveContents();
-                        Event.current.Use();
+                            Event.current.Use();
+                        }
                         break;
 
                     case KeyCode.R:
                         if (Event.current.control)
+                        {
                             ReloadContents();
-                        Event.current.Use();
+                            Event.current.Use();
+                        }
                         break;
                 }
             }
@@ -390,7 +395,7 @@ namespace kOS.Screen
         protected void CheckResizeDrag()
         {
             Event e = Event.current;
-            if (e.type == EventType.mouseDown && e.button == 0)
+            if (e.type == EventType.MouseDown && e.button == 0)
             {
                 // Remember the fact that this mouseDown started on the resize button:
                 if (resizeButtonCoords.Contains(MouseButtonDownPosRelative))
@@ -400,7 +405,7 @@ namespace kOS.Screen
                     Event.current.Use();
                 }
             }
-            if (e.type == EventType.mouseUp && e.button == 0) // mouse button went from Down to Up just now.
+            if (e.type == EventType.MouseUp && e.button == 0) // mouse button went from Down to Up just now.
             {
                 if (resizeMouseDown)
                 {

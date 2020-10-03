@@ -282,6 +282,7 @@ namespace kOS.Safe.Compilation.KS
                 case TokenType.COMPARATOR:
                 case TokenType.AND:
                 case TokenType.OR:
+                case TokenType.CHOOSE:
                 case TokenType.directive:
                     doChildren = false;
                     break;                
@@ -1149,6 +1150,9 @@ namespace kOS.Safe.Compilation.KS
                 case TokenType.expr:
                     VisitExpr(node);
                     break;
+                case TokenType.ternary_expr:
+                    VisitTernary(node);
+                    break;
                 case TokenType.or_expr:
                 case TokenType.and_expr:
                     VisitShortCircuitBoolean(node);
@@ -1352,11 +1356,38 @@ namespace kOS.Safe.Compilation.KS
             }
         }
 
+        private void VisitTernary(ParseNode node)
+        {
+            NodeStartHousekeeping(node);
+
+            // Syntax pattern is:
+            // [0] = keyword CHOOSE
+            // [1] = expression returned if true
+            // [2] = keyword IF
+            // [3] = expression with boolean value
+            // [4] = keyword ELSE
+            // [5] = expression returned if false
+
+            VisitNode(node.Nodes[3]); // eval the boolean clause, put on stack.
+
+            Opcode bypassTrue = AddOpcode(new OpcodeBranchIfFalse());
+
+            VisitNode(node.Nodes[1]); // expression if true.
+            Opcode bypassFalse = AddOpcode(new OpcodeBranchJump());
+
+            bypassTrue.DestinationLabel = GetNextLabel(false);
+
+            VisitNode(node.Nodes[5]); // expression if false.
+
+            bypassFalse.DestinationLabel = GetNextLabel(false);
+            addBranchDestination = true;
+        }
+
         /// <summary>
         /// Handles the short-circuit logic of boolean OR and boolean AND
         /// chains.  It is like VisitExpressionChain (see elsewhere) but
         /// in this case it has the special logic to short circuit and skip
-        /// executing the righthand expression if it can.  (The generic VisitExpressionXhain
+        /// executing the righthand expression if it can.  (The generic VisitExpressionChain
         /// always evaluates both the left and right sides of the operator first, then
         /// does the operation).
         /// </summary>
@@ -1981,7 +2012,23 @@ namespace kOS.Safe.Compilation.KS
         private void VisitString(ParseNode node)
         {
             NodeStartHousekeeping(node);
-            AddOpcode(new OpcodePush(new StringValue(node.Token.Text.Trim('"'))));
+            string value = node.Token.Text;
+            bool shouldEscape = true;
+            if (value[0] == '@')
+            {
+                value = value.Substring(1);
+                shouldEscape = false;
+            }
+            // Can't use Trim('"') because that cuts ALL trailing and leading quotes,
+            // while we want to only cut the first and last quote char:
+            if (value.EndsWith("\""))
+                value = value.Substring(0, value.Length - 1);
+            if (value.StartsWith("\""))
+                value = value.Substring(1);
+            if (shouldEscape)
+                value = value.Replace("\"\"", "\"");
+            
+            AddOpcode(new OpcodePush(new StringValue(value)));
         }
 
         /// <summary>
@@ -2509,7 +2556,7 @@ namespace kOS.Safe.Compilation.KS
                 {
                     Trigger triggerObject = context.Triggers.GetTrigger(triggerIdentifier);
                     AddOpcode(new OpcodePushRelocateLater(null), triggerObject.GetFunctionLabel());
-                    AddOpcode(new OpcodeAddTrigger(false));
+                    AddOpcode(new OpcodeAddTrigger(false, InterruptPriority.RecurringControl));
                 }
                     
                 // enable this FlyByWire parameter
@@ -2590,7 +2637,7 @@ namespace kOS.Safe.Compilation.KS
                 VisitNode(node.Nodes[1]); // the expression in the on statement.
                 AddOpcode(new OpcodeStore(triggerObject.OldValueIdentifier));
                 AddOpcode(new OpcodePushRelocateLater(null), triggerObject.GetFunctionLabel());
-                AddOpcode(new OpcodeAddTrigger());
+                AddOpcode(new OpcodeAddTrigger(InterruptPriority.Recurring));
             }
         }
 
@@ -2604,7 +2651,7 @@ namespace kOS.Safe.Compilation.KS
             if (triggerObject.IsInitialized())
             {
                 AddOpcode(new OpcodePushRelocateLater(null), triggerObject.GetFunctionLabel());
-                AddOpcode(new OpcodeAddTrigger());
+                AddOpcode(new OpcodeAddTrigger(InterruptPriority.Recurring));
             }
         }
 

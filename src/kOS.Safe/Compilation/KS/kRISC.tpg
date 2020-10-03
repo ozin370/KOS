@@ -2,6 +2,10 @@
 
 // Terminals
 // ===================================================
+
+// When these change, please also update the list of keywords and
+// operators in the documentation: doc/source/language/syntax.rst
+
 //Math
 PLUSMINUS    -> @"(\+|-)";
 MULT         -> @"\*";
@@ -65,6 +69,7 @@ REBOOT       -> @"reboot\b";
 SHUTDOWN     -> @"shutdown\b";
 FOR          -> @"for\b";
 UNSET        -> @"unset\b";
+CHOOSE       -> @"choose\b";
 
 //Generic
 BRACKETOPEN  -> @"\(";
@@ -78,7 +83,12 @@ COLON        -> @":";
 IN           -> @"in\b";
 ARRAYINDEX   -> @"#";
 ALL          -> @"all\b";
-IDENTIFIER   -> @"[_\p{L}]\w*";
+
+// WARNING - IF YOU EDIT THE REGEX FOR IDENTIFIER ON THE NEXT LINE,
+// THEN ALSO EDIT kOS.Safe.Utilities.StringUtil.IsValidIdentifier()
+// TO USE THE SAME REGEX !!!!!
+IDENTIFIER   -> @"[_\p{L}]\w*"; //<---- Important - see above Comment!!!!!
+
 FILEIDENT    -> @"[_\p{L}]\w*(\.[_\p{L}]\w*)*";
 INTEGER      -> @"\d[_\d]*";
 DOUBLE       -> @"(\d+(?:_\d*)*)?\.\d+(?:_\d*)*";
@@ -207,7 +217,8 @@ unset_stmt     -> UNSET (IDENTIFIER | ALL) EOI;
 // ---------- expressions ---------------------------
 
 arglist            -> expr (COMMA expr)*;
-expr               -> (or_expr|instruction_block);
+expr               -> (ternary_expr|or_expr|instruction_block);
+ternary_expr       -> CHOOSE expr IF expr ELSE expr;
 or_expr            -> and_expr (OR and_expr)*;
 and_expr           -> compare_expr (AND compare_expr)*;
 compare_expr       -> arith_expr (COMPARATOR arith_expr)*;
